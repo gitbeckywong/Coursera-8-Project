@@ -1,0 +1,121 @@
+---
+title: "Predicting Activity for Weight Lifting Exercise"
+author: "gitbeckywong"
+date: "May 23, 2015"
+output: html_document
+---
+
+## Executive Summary
+*This analysis was performed for the Practical Machine Learning course in the Johns Hopkins Coursera Data Science Specialization.*
+
+The Weight Lifting Exercise Dataset from http://groupware.les.inf.puc-rio.br/har contains data that is part of a human activity recognition research project, investigating how well an activity (in this case, a Unilateral Dumbbell Biceps Curl) was performed.  The exercise was performed in five different fashions, each corresponding to a different "classe" (A, B, C, D, and E in the dataset).  On-body sensors were used to monitor a number of different variables while the activity was performed.
+
+A subset of the Weight Lifting Exercise Dataset was analyzed and used to create a model to predict the manner in which the exercise was done (i.e. "classe" A, B, C, D, or E).  Using the random forest ("rf") method of the caret package, a model was created that accurately predicted the "classe" for all 20 observations in the provided test set.
+
+## Data Cleaning
+First, load the required packages.  *(Note that it is assumed that the packages are already installed.)*
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+library(caret)
+library(ggplot2)
+```
+
+Next, download the data to the working directory and read it in.
+```{r, cache=TRUE}
+# Download the data.
+urltrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urltest <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(urltrain, destfile = "training.csv")
+download.file(urltest, destfile = "testing.csv")
+
+# Load the data.
+trainingdata <- read.csv("training.csv",na.strings=c("NA",""), header = TRUE, stringsAsFactors=FALSE)
+testingdata <- read.csv("testing.csv",na.strings=c("NA",""), header = TRUE, stringsAsFactors=FALSE)
+```
+
+Partition the training data into a training set and testing (validation) set.  Note that the original testing data is left untouched.
+```{r, cache=TRUE}
+set.seed(415)
+inTrain <- createDataPartition(y=trainingdata$classe,p=0.75,list=FALSE)
+training <- trainingdata[inTrain,]
+testing <- trainingdata[-inTrain,]
+```
+
+A brief examination of the number of columns containing a majority of NA values, as well as the names of columns themselves (only the names of the first 20 columns printed below), makes it clear that the dataset needs to be cleaned prior to model fitting.
+```{r, cache=TRUE}
+table(colMeans(is.na(training))) # This table shows how many times the value of percentage of NAs in a column occurs in the dataset.
+```
+
+The table above shows that there are only `r unname(table(colMeans(is.na(training)))[1])` columns that do not contain a majority of NAs.  The remaining columns all contain a majority of NAs, and therefore should be ignored.
+
+```{r, cache=TRUE}
+names(training)[1:20]
+```
+
+Columns with a majority of NA values are removed from the datasets because they do not contain enough actual information to provide any meaningful contribution to the prediction model.  Columns with irrelevant data such as user name, timestamps, etc are also removed.
+```{r, cache=TRUE}
+# Delete columns with the majority = NA
+trainingsubset <- training[ ,colMeans(is.na(training)) < 0.95]
+# Delete columns with irrelevant data (names, timestamps, etc)
+trainingsubset <- trainingsubset[,-c(1:7)]
+# Change "classe" variable to factor to ensure the model will run correctly and a confusionMatrix can be performed later.
+trainingsubset$classe <- as.factor(trainingsubset$classe)
+
+# Also perform the same data cleaning measures on the validation set (so a confusionMatrix can be performed later).
+testingsubset <- testing[ ,colMeans(is.na(testing)) < 0.95]
+testingsubset <- testingsubset[,-c(1:7)]
+testingsubset$classe <- as.factor(testingsubset$classe)
+```
+
+## Model Creation
+Create a model using the train function from the caret package, with the random forest method.  Also include k-fold cross validation train control parameters.  *Note - running this model takes awhile!*
+```{r, message = FALSE, warning = FALSE, cache=TRUE}
+ctrlk <- trainControl(method="cv",number=5)
+modFit <- train(classe ~ . , data = trainingsubset, method = "rf",trControl = ctrlk, prox=TRUE,allowParallel=TRUE, verbose=FALSE)
+```
+
+## Model Review
+The data below shows information about the model that was developed, including the accuracy.
+```{r cache=TRUE}
+modFit
+```
+
+Below are some of the most important variables that were used in the creating the model.
+```{r cache=TRUE}
+varImp(modFit)
+```
+
+The following plot shows the class as a function of two of the most "important" variables.
+```{r, cache=TRUE}
+qplot(roll_belt, pitch_forearm, color = classe, data = trainingsubset)
+```
+
+The above plot is not very clear, and the values for roll_belt seem to be limited.  Therefore, we choose 2 other important variables from the model to plot, and get a more interesting image of the distribution.
+```{r, cache=TRUE}
+qplot(roll_forearm, pitch_forearm, color = classe, data = trainingsubset)
+```
+
+Overall, though, it is clear that using two predictors alone is insufficient to accurately describe the data, which is why there are so many predictors included above with relative importance contributing to the overall model fit.
+
+To also verify the accuracy of the model, validate with the "test" set that was partitioned from the original training set.
+```{r cache=TRUE}
+conmat <- confusionMatrix(testingsubset$classe,predict(modFit,testingsubset))
+oose <- round(unname(1-conmat$overall['Accuracy']) * 100, 2)
+conmat
+```
+
+The out of sample error is **`r oose`**%.  This is equivalent to 1 - Accuracy from the Confusion Matrix above.
+
+## Predict the 20 Test Cases
+Use the developed model to predict the classe for the 20 problems in the testing dataset (prediction values not provided here).  Create a text file for each problem_id.  These are the files submitted to the class website.  All predictions are correct, for a 100% accuracy with the test set.
+```{r, cache=TRUE}
+pred <- predict(modFit,testingdata)
+answers <- as.character(pred)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
